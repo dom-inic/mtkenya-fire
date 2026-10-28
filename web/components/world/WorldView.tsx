@@ -12,7 +12,9 @@ import { fmtDayTime, fromMinutes } from "@/lib/time";
 import { groundHeight, loadWorld, Projection, VEXAG, type Raster, type WorldData } from "@/lib/world";
 import { Labels, Lakes, Roads, type Poi } from "./Features";
 import { ControlLineDots, Firebreaks, Ignition } from "./PlanOverlays";
-import Planner, { type PlannerState, type Threat } from "./Planner";
+import Planner, { HELI_BASE, TANKER_BASE, type PlannerState, type Threat } from "./Planner";
+import { Aircraft, crewAt, Crews, DropBursts, poseAt } from "./Response3D";
+import type { HeliType, Resources } from "@/lib/suppression";
 import Smoke from "./Smoke";
 import Terrain, { makeFireUniforms, setFire, useFireClock, type FireLayer, type FireUniforms } from "./Terrain";
 import { useEngine } from "./useEngine";
@@ -93,10 +95,44 @@ interface SceneProps {
   showProb: boolean;
   plan: PlannerState | null;
   result: EngineResult | null;
+  resources: Resources | null;
+  follow: string | null;
   onGround: (lon: number, lat: number) => void;
 }
 
-function Scene({ world, data, layers, view, controls, fireLayer, now, clock, weather, showProb, plan, result, onGround }: SceneProps) {
+/** Chase camera: ride along behind an aircraft, or watch a crew from above. */
+function Follow({ world, proj, result, unit, now, controls }: { world: WorldData; proj: Projection; result: EngineResult; unit: string; now: number; controls: React.RefObject<CameraControls | null> }) {
+  const legs = useMemo(() => (result.response?.legs ?? []).filter((l) => l.unit === unit).sort((a, b) => a.t0 - b.t0), [result, unit]);
+  const track = useMemo(() => result.response?.crewTracks.find((c) => c.unit === unit)?.points ?? [], [result, unit]);
+  const nowRef = useRef(now);
+  nowRef.current = now;
+  useFrame(() => {
+    const c = controls.current;
+    if (!c) return;
+    let lon: number, lat: number, agl: number, heading: number;
+    if (legs.length) {
+      const p = poseAt(legs, nowRef.current);
+      if (!p) return;
+      [lon, lat] = p.lonlat;
+      agl = p.agl;
+      heading = p.heading;
+    } else {
+      const p = crewAt(track, nowRef.current);
+      if (!p) return;
+      [lon, lat] = p;
+      agl = 0;
+      heading = Math.PI * 0.75;
+    }
+    const tx = proj.x(lon);
+    const tz = proj.z(lat);
+    const ty = groundHeight(world, lon, lat) * VEXAG + agl;
+    const back = 700;
+    c.setLookAt(tx - Math.sin(heading) * back, ty + 260, tz + Math.cos(heading) * back, tx, ty, tz, false);
+  });
+  return null;
+}
+
+function Scene({ world, data, layers, view, controls, fireLayer, now, clock, weather, showProb, plan, result, resources, follow, onGround }: SceneProps) {
   const proj = useMemo(() => new Projection(world.meta.world), [world]);
   const fire = useMemo(() => makeFireUniforms(), []);
   useEffect(() => setFire(fire, fireLayer, proj), [fire, fireLayer, proj]);
@@ -160,6 +196,20 @@ function Scene({ world, data, layers, view, controls, fireLayer, now, clock, wea
       {plan?.ignition && <Ignition world={world} proj={proj} at={plan.ignition} label="Ignition" />}
       {plan && <Firebreaks world={world} proj={proj} lines={plan.breaks} draft={plan.draft} />}
       {line && <ControlLineDots world={world} proj={proj} line={line} />}
+      {resources && result?.response && (
+        <>
+          <Aircraft
+            world={world}
+            proj={proj}
+            units={[...resources.helis.map((h) => ({ id: h.id, kind: "heli" as const, model: h.type })), ...resources.tankers.map((t) => ({ id: t.id, kind: "tanker" as const }))]}
+            legs={result.response.legs}
+            now={now}
+          />
+          <Crews world={world} proj={proj} tracks={result.response.crewTracks} now={now} />
+          <DropBursts world={world} proj={proj} drops={result.response.drops} now={now} />
+          {follow && <Follow world={world} proj={proj} result={result} unit={follow} now={now} controls={controls} />}
+        </>
+      )}
       {built.map((b) => (
         <ControlLineDots key={b.kind} world={world} proj={proj} built line={b.line} />
       ))}
@@ -201,6 +251,7 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
     draft: [],
     applied: [],
     showLine: null,
+    resp: { helis: { as350: 1, mi17: 0, bell205: 0 }, tankers: 0, crews: 2, dispatch: 60 },
   });
   const set = useCallback((p: Partial<PlannerState>) => setPlan((s) => ({ ...s, ...p })), []);
   const engine = useEngine(world, data);
@@ -233,6 +284,35 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
     else setSeries(custom(plan.custom, plan.startHour, hours));
   }, [mode, plan.weatherMode, plan.ignition, plan.horizon, plan.startHour, plan.custom, world, data]);
 
+  // The response: units at their real bases, crews from the staging points nearest the fire
+  const resources = useMemo<Resources | null>(() => {
+    if (!world || !plan.ignition) return null;
+    const find = (name: string) => world.features.pois.find((p) => p.name === name);
+    const [lon0, lat0] = plan.ignition;
+    const d2 = (p: { lon: number; lat: number }) => (p.lon - lon0) ** 2 + (p.lat - lat0) ** 2;
+    // Crews start from park gates and forest stations, or are flown into the airstrips that serve the park
+    const staging = world.features.pois
+      .filter((p) => p.kind === "gate" || p.kind === "station" || (p.kind === "airstrip" && /Rutundu|Lewa|Nanyuki/i.test(p.name)))
+      .sort((a, b) => d2(a) - d2(b))
+      .slice(0, 3);
+    const helis: Resources["helis"] = [];
+    (Object.keys(plan.resp.helis) as HeliType[]).forEach((type) => {
+      const base = find(HELI_BASE[type]);
+      for (let k = 0; k < plan.resp.helis[type] && base; k++) helis.push({ id: `H${helis.length + 1}`, type, base });
+    });
+    const tb = find(TANKER_BASE);
+    const tankers = tb ? Array.from({ length: plan.resp.tankers }, (_, k) => ({ id: `T${k + 1}`, base: tb })) : [];
+    const crews = staging.length ? Array.from({ length: plan.resp.crews }, (_, k) => ({ id: `C${k + 1}`, base: staging[k % staging.length], size: 20 })) : [];
+    return {
+      helis,
+      tankers,
+      crews,
+      dispatchMin: plan.resp.dispatch,
+      airstrips: world.features.pois.filter((p) => p.kind === "airstrip" || p.kind === "airbase"),
+      startHourOfDay: series ? Number(series.start.slice(11, 13)) : plan.startHour,
+    };
+  }, [world, plan.ignition, plan.resp, plan.startHour, series]);
+
   // Run the forecast whenever the scenario changes
   useEffect(() => {
     if (mode !== "whatif" || !plan.ignition || !series || !world) return;
@@ -247,11 +327,13 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
       bases,
       mobiliseMin: plan.mobilise,
       ensemble: plan.ensemble,
+      resources: resources ?? undefined,
     });
-  }, [mode, plan.ignition, plan.horizon, plan.ensemble, plan.mobilise, plan.breaks, plan.applied, series, world, data, runEngine]);
+  }, [mode, plan.ignition, plan.horizon, plan.ensemble, plan.mobilise, plan.breaks, plan.applied, series, world, data, runEngine, resources]);
 
   // Scenario clock (minutes after ignition)
   const [simMinute, setSimMinute] = useState(0);
+  const [follow, setFollow] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(2);
   useEffect(() => {
@@ -299,7 +381,7 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
     const g = r.grid;
     const bbox = { west: g.west, north: g.north, east: g.west + g.w * g.dLon, south: g.north - g.h * g.dLat };
     const arrival: Raster<Float32Array> = { w: g.w, h: g.h, bbox, data: r.arrival };
-    return { arrival, prob: r.prob ? { w: g.w, h: g.h, bbox, data: r.prob } : null };
+    return { arrival, prob: r.prob ? { w: g.w, h: g.h, bbox, data: r.prob } : null, block: r.response?.block ?? null };
   }, [engine.result]);
   const replayLayer = useMemo<FireLayer | null>(() => (world?.fire ? { arrival: world.fire } : null), [world]);
 
@@ -371,6 +453,8 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
               showProb={whatif && plan.ensemble}
               plan={whatif ? plan : null}
               result={whatif ? engine.result : null}
+              resources={whatif ? resources : null}
+              follow={whatif ? follow : null}
               onGround={onGround}
             />
           </Suspense>
@@ -389,7 +473,10 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
         {VIEWS.map((v) => (
           <button
             key={v.name}
-            onClick={() => setView({ ...v })}
+            onClick={() => {
+              setFollow(null);
+              setView({ ...v });
+            }}
             className={`rounded-md px-2.5 py-1 text-[11px] font-medium shadow backdrop-blur ${view.name === v.name ? "bg-fire text-white" : "bg-black/45 text-white hover:bg-black/60"}`}
           >
             {v.name}
@@ -399,7 +486,7 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
 
       {whatif && (
         <div className="pointer-events-none absolute top-14 bottom-20 left-3 z-10 flex">
-          <Planner s={plan} set={set} result={engine.result} progress={engine.progress} weatherNote={weatherNote} threats={threats} crewEta={crewEta} onFinishBreak={finishBreak} />
+          <Planner s={plan} set={set} result={engine.result} progress={engine.progress} weatherNote={weatherNote} threats={threats} crewEta={crewEta} onFinishBreak={finishBreak} follow={follow} onFollow={setFollow} />
         </div>
       )}
 

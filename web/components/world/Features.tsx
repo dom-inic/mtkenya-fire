@@ -41,8 +41,8 @@ const ROAD_STYLE: Record<string, { colour: string; lift: number }> = {
   secondary: { colour: "#efd9a8", lift: 7 },
   tertiary: { colour: "#e9d3b0", lift: 6 },
   unclassified: { colour: "#d9c3a0", lift: 6 },
-  track: { colour: "#c79a63", lift: 5 },
-  path: { colour: "#b88a5c", lift: 4 },
+  track: { colour: "#b9a588", lift: 9 },
+  path: { colour: "#9d917f", lift: 9 },
   runway: { colour: "#f5f5f4", lift: 6 },
 };
 

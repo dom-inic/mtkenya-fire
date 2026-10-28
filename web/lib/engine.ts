@@ -9,6 +9,7 @@
  */
 
 import type { BBox, Raster } from "./world";
+import type { Resources, ResponseResult } from "./suppression";
 
 export interface FireParams {
   k: number;
@@ -51,6 +52,7 @@ export interface Scenario {
   mobiliseMin: number;
   ensemble: boolean;
   sizeKm?: number;
+  resources?: Resources;
 }
 
 export interface GridSpec {
@@ -78,6 +80,9 @@ export interface EngineResult {
   series: { hour: number; ha: number }[];
   firsts: { forest: number | null; bamboo: number | null };
   control: { initial: ControlLine | null; pinch: ControlLine | null };
+  /** Without the response (when resources were sent) */
+  baseline: { series: { hour: number; ha: number }[] } | null;
+  response: Omit<ResponseResult, "arrival" | "series"> | null;
   runs: number;
   ms: number;
 }
@@ -162,7 +167,7 @@ class Heap {
   }
 }
 
-interface Terrain {
+export interface Terrain {
   g: GridSpec;
   fuel: Uint8Array;
   height: Float32Array;
@@ -194,7 +199,7 @@ function traceSegment(g: GridSpec, a: [number, number], b: [number, number], mar
 
 const ROAD_KMH: Record<string, number> = { trunk: 60, primary: 50, secondary: 40, tertiary: 35, unclassified: 25, track: 14, path: 4 };
 
-function buildTerrain(w: EngineWorld, s: Scenario): Terrain {
+export function buildTerrain(w: EngineWorld, s: Scenario): Terrain {
   const sizeKm = s.sizeKm ?? 32;
   const mx = M_PER_DEG_LAT * 1.00336 * Math.cos((s.ignition.lat * Math.PI) / 180);
   const dLon = RES / mx;
@@ -316,7 +321,13 @@ function hourlyFactors(weather: HourWeather[], hours: number, p: FireParams, dir
   return f;
 }
 
-function spread(t: Terrain, s: Scenario, dirShift = 0, speedMult = 1): Float32Array {
+/** Cells that hold the fire for a while: [from, until) minutes (until = Infinity: for good). */
+export interface Block {
+  from: Float32Array;
+  until: Float32Array;
+}
+
+export function spread(t: Terrain, s: Scenario, dirShift = 0, speedMult = 1, block?: Block): Float32Array {
   const { g, base, slope, upslope } = t;
   const hours = s.hours;
   const factors = hourlyFactors(s.weather, hours, s.params, dirShift, speedMult);
@@ -380,7 +391,11 @@ function spread(t: Terrain, s: Scenario, dirShift = 0, speedMult = 1): Float32Ar
       }
       const sDir = slope[j] * Math.cos(AZ[d] - upslope[j]);
       const rate = b * Math.min(Math.max(exp(0.0693 * sDir), 0.25), 8);
-      const t1 = arrive(d, tt, (STEP[d] * g.res) / rate);
+      let t1 = arrive(d, tt, (STEP[d] * g.res) / rate);
+      if (block && t1 >= block.from[j] && t1 < block.until[j]) {
+        if (block.until[j] === Infinity) continue; // a built line
+        t1 = block.until[j]; // wet ground: the fire waits until it dries
+      }
       if (t1 < arrival[j] && t1 <= tEnd) {
         arrival[j] = t1;
         heap.push(t1, j);
@@ -390,35 +405,37 @@ function spread(t: Terrain, s: Scenario, dirShift = 0, speedMult = 1): Float32Ar
   return Float32Array.from(arrival);
 }
 
+/** Cell index of a lon/lat, or -1 outside the grid. */
+export function cellOf(g: GridSpec, lon: number, lat: number) {
+  const x = Math.floor((lon - g.west) / g.dLon);
+  const y = Math.floor((g.north - lat) / g.dLat);
+  return x >= 0 && y >= 0 && x < g.w && y < g.h ? y * g.w + x : -1;
+}
+
+export function lonLatOf(g: GridSpec, i: number): [number, number] {
+  const r = (i / g.w) | 0;
+  const c = i - r * g.w;
+  return [g.west + (c + 0.5) * g.dLon, g.north - (r + 0.5) * g.dLat];
+}
+
 /**
- * Crew travel time (minutes) from staging points: drive on roads and tracks,
- * walk elsewhere (Tobler's hiking function, slower with altitude and in dense
- * vegetation), no crossing lakes.
+ * Travel time (minutes) from sources: drive on roads and tracks, walk
+ * elsewhere (Tobler's hiking function, slower with altitude and in dense
+ * vegetation), no crossing lakes. `pred` receives each cell's previous cell.
  */
-function crewTimes(t: Terrain, s: Scenario): Float32Array {
+export function travel(t: Terrain, sources: [number, number][], pred?: Int32Array): Float32Array {
   const { g, road, water, height, fuel } = t;
   const n = g.w * g.h;
   // Float64 while searching: float32 rounding against float64 heap keys makes
   // Dijkstra re-expand settled cells over and over
   const eta = new Float64Array(n).fill(Infinity);
   const heap = new Heap();
-  const seed = (i: number, m: number) => {
-    if (m < eta[i]) {
+  pred?.fill(-1);
+  for (const [i, m] of sources) {
+    if (i >= 0 && m < eta[i]) {
       eta[i] = m;
       heap.push(m, i);
     }
-  };
-  for (const b of s.bases) {
-    const x = Math.floor((b.lon - g.west) / g.dLon);
-    const y = Math.floor((g.north - b.lat) / g.dLat);
-    if (x >= 0 && y >= 0 && x < g.w && y < g.h) seed(y * g.w + x, s.mobiliseMin);
-  }
-  // Crews from outside the window come in on the main roads
-  for (let x = 0; x < g.w; x++) {
-    for (const y of [0, g.h - 1]) if (road[y * g.w + x] >= 25) seed(y * g.w + x, s.mobiliseMin + 60);
-  }
-  for (let y = 0; y < g.h; y++) {
-    for (const x of [0, g.w - 1]) if (road[y * g.w + x] >= 25) seed(y * g.w + x, s.mobiliseMin + 60);
   }
   const vegFactor = [0.8, 0.9, 0.55, 0.45, 0.4, 0.9, 0.8];
   while (heap.n) {
@@ -443,11 +460,30 @@ function crewTimes(t: Terrain, s: Scenario): Float32Array {
       const m = tt + dist / ((kmh * 1000) / 60);
       if (m < eta[j]) {
         eta[j] = m;
+        if (pred) pred[j] = i;
         heap.push(m, j);
       }
     }
   }
   return Float32Array.from(eta);
+}
+
+/** Crews from every staging point, plus crews driving in on main roads from outside. */
+function crewTimes(t: Terrain, s: Scenario): Float32Array {
+  const { g, road } = t;
+  const sources: [number, number][] = s.bases.map((b) => [cellOf(g, b.lon, b.lat), s.mobiliseMin]);
+  const edge = (x: number, y: number) => {
+    if (road[y * g.w + x] >= 25) sources.push([y * g.w + x, s.mobiliseMin + 60]);
+  };
+  for (let x = 0; x < g.w; x++) {
+    edge(x, 0);
+    edge(x, g.h - 1);
+  }
+  for (let y = 0; y < g.h; y++) {
+    edge(0, y);
+    edge(g.w - 1, y);
+  }
+  return travel(t, sources);
 }
 
 /**
@@ -488,7 +524,7 @@ function activeEdge(t: Terrain, arrival: Float32Array, eta: Float32Array, h: num
  *  - pinch point: once the fire has outgrown initial attack, the shortest edge
  *    crews can mostly reach, where terrain and fuels squeeze the fire
  */
-function controlLines(t: Terrain, arrival: Float32Array, eta: Float32Array, hours: number, series: { hour: number; ha: number }[]) {
+export function controlLines(t: Terrain, arrival: Float32Array, eta: Float32Array, hours: number, series: { hour: number; ha: number }[]) {
   const edges: ControlLine[] = [];
   for (let h = 1; h < hours; h++) {
     const e = activeEdge(t, arrival, eta, h);
@@ -502,10 +538,8 @@ function controlLines(t: Terrain, arrival: Float32Array, eta: Float32Array, hour
   return { initial, pinch };
 }
 
-export function runScenario(w: EngineWorld, s: Scenario, progress?: (done: number, total: number) => void): EngineResult {
-  const t0 = performance.now();
-  const terrain = buildTerrain(w, s);
-  const { g } = terrain;
+/** Unsuppressed forecast: deterministic run, optional ensemble, crew times, control lines. */
+export function forecastRuns(terrain: Terrain, s: Scenario, progress?: (done: number, total: number) => void) {
   const arrival = spread(terrain, s);
   const runs: [number, number][] = s.ensemble
     ? [[-30, 1], [-15, 1], [15, 1], [30, 1], [0, 0.75], [0, 1.25], [-15, 1.25], [15, 1.25], [-15, 0.8], [15, 0.8]]
@@ -524,37 +558,50 @@ export function runScenario(w: EngineWorld, s: Scenario, progress?: (done: numbe
     prob = new Uint8Array(arrival.length);
     for (let i = 0; i < count.length; i++) prob[i] = Math.round((count[i] / total) * 255);
   }
-  const eta = crewTimes(terrain, s);
+  return { arrival, prob, runs: total, eta: crewTimes(terrain, s) };
+}
 
-  const cellHa = (g.res * g.res) / 1e4;
-  const series: { hour: number; ha: number }[] = [];
-  const counts = new Float64Array(s.hours + 1);
+/** Hourly burned area, and when the fire first reaches bamboo and montane forest. */
+export function summarise(terrain: Terrain, arrival: Float32Array, hours: number) {
+  const cellHa = (terrain.g.res * terrain.g.res) / 1e4;
+  const counts = new Float64Array(hours + 1);
   let forest: number | null = null;
   let bamboo: number | null = null;
   for (let i = 0; i < arrival.length; i++) {
     const a = arrival[i];
     if (a === Infinity) continue;
-    counts[Math.min(Math.ceil(a / 60), s.hours)]++;
+    counts[Math.min(Math.ceil(a / 60), hours)]++;
     if (terrain.fuel[i] === 4) {
       const h = terrain.height[i];
       if (h > 2450 && h < 3050) bamboo = bamboo === null ? a : Math.min(bamboo, a);
       else forest = forest === null ? a : Math.min(forest, a);
     }
   }
+  const series: { hour: number; ha: number }[] = [];
   let acc = 0;
-  for (let h = 0; h <= s.hours; h++) {
+  for (let h = 0; h <= hours; h++) {
     acc += counts[h];
     series.push({ hour: h, ha: Math.round(acc * cellHa) });
   }
+  return { series, firsts: { forest, bamboo } };
+}
+
+export function runScenario(w: EngineWorld, s: Scenario, progress?: (done: number, total: number) => void): EngineResult {
+  const t0 = performance.now();
+  const terrain = buildTerrain(w, s);
+  const f = forecastRuns(terrain, s, progress);
+  const sum = summarise(terrain, f.arrival, s.hours);
   return {
-    grid: g,
-    arrival,
-    prob,
-    eta,
-    series,
-    firsts: { forest, bamboo },
-    control: controlLines(terrain, arrival, eta, s.hours, series),
-    runs: total,
+    grid: terrain.g,
+    arrival: f.arrival,
+    prob: f.prob,
+    eta: f.eta,
+    series: sum.series,
+    firsts: sum.firsts,
+    control: controlLines(terrain, f.arrival, f.eta, s.hours, sum.series),
+    baseline: null,
+    response: null,
+    runs: f.runs,
     ms: Math.round(performance.now() - t0),
   };
 }

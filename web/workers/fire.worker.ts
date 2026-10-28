@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
-import { runScenario, type EngineWorld, type Scenario } from "@/lib/engine";
+import type { EngineWorld, Scenario } from "@/lib/engine";
+import { run } from "@/lib/run";
 
 let world: EngineWorld | null = null;
 
@@ -10,7 +11,12 @@ self.onmessage = (e: MessageEvent<{ type: "init"; world: EngineWorld } | { type:
     return;
   }
   if (!world) return;
-  const result = runScenario(world, msg.scenario, (done, total) => self.postMessage({ type: "progress", id: msg.id, done, total }));
-  const transfer = [result.arrival.buffer, result.eta.buffer, ...(result.prob ? [result.prob.buffer] : [])];
+  const result = run(world, msg.scenario, (done, total) => self.postMessage({ type: "progress", id: msg.id, done, total }));
+  const transfer: ArrayBuffer[] = [result.arrival.buffer, result.eta.buffer] as ArrayBuffer[];
+  if (result.prob) transfer.push(result.prob.buffer as ArrayBuffer);
+  if (result.response) {
+    const b = result.response.block;
+    transfer.push(b.from.buffer as ArrayBuffer, b.until.buffer as ArrayBuffer, b.kind.buffer as ArrayBuffer);
+  }
   self.postMessage({ type: "result", id: msg.id, result }, { transfer });
 };

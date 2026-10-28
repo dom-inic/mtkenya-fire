@@ -100,6 +100,23 @@ vec2 fireUv(vec2 xz, vec4 box) { return vec2((xz.x - box.x) / (box.z - box.x), (
 export interface FireLayer {
   arrival: Raster<Float32Array>;
   prob?: Raster<Uint8Array> | null;
+  /** Response on the ground, same grid: held [from, until) and kind (1 water, 2 retardant, 3 cut line) */
+  block?: { from: Float32Array; until: Float32Array; kind: Uint8Array } | null;
+}
+
+function blockTexture(b: NonNullable<FireLayer["block"]>, w: number, h: number) {
+  const data = new Float32Array(w * h * 4);
+  for (let i = 0; i < b.kind.length; i++) {
+    if (!b.kind[i]) continue;
+    data[i * 4] = b.from[i];
+    data[i * 4 + 1] = Number.isFinite(b.until[i]) ? b.until[i] : 1e9;
+    data[i * 4 + 2] = b.kind[i];
+  }
+  const t = new THREE.DataTexture(flipRows(data, w, h, 4), w, h, THREE.RGBAFormat, THREE.FloatType);
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  t.needsUpdate = true;
+  return t;
 }
 
 export interface FireUniforms {
@@ -110,6 +127,8 @@ export interface FireUniforms {
   uClock: { value: number };
   uShowFire: { value: number };
   uShowProb: { value: number };
+  uBlock: { value: THREE.Texture | null };
+  uShowBlock: { value: number };
 }
 
 export function makeFireUniforms(): FireUniforms {
@@ -121,6 +140,8 @@ export function makeFireUniforms(): FireUniforms {
     uClock: { value: 0 },
     uShowFire: { value: 0 },
     uShowProb: { value: 0 },
+    uBlock: { value: null },
+    uShowBlock: { value: 0 },
   };
 }
 
@@ -128,8 +149,11 @@ export function makeFireUniforms(): FireUniforms {
 export function setFire(u: FireUniforms, layer: FireLayer | null, proj: Projection) {
   u.uArrival.value?.dispose();
   u.uProb.value?.dispose();
+  u.uBlock.value?.dispose();
   u.uArrival.value = layer ? fireTexture(layer.arrival) : null;
   u.uProb.value = layer?.prob ? probTexture(layer.prob) : null;
+  u.uBlock.value = layer?.block ? blockTexture(layer.block, layer.arrival.w, layer.arrival.h) : null;
+  u.uShowBlock.value = layer?.block ? 1 : 0;
   if (layer) {
     const b = layer.arrival.bbox;
     u.uFireBox.value.set(proj.x(b.west), proj.z(b.north), proj.x(b.east), proj.z(b.south));
@@ -148,8 +172,8 @@ function burnable(mat: THREE.MeshStandardMaterial, u: FireUniforms) {
       .replace(
         "#include <common>",
         `#include <common>
-uniform sampler2D uArrival; uniform sampler2D uProb; uniform vec4 uFireBox;
-uniform float uNow; uniform float uClock; uniform float uShowFire; uniform float uShowProb;
+uniform sampler2D uArrival; uniform sampler2D uProb; uniform sampler2D uBlock; uniform vec4 uFireBox;
+uniform float uNow; uniform float uClock; uniform float uShowFire; uniform float uShowProb; uniform float uShowBlock;
 varying vec2 vFireXZ;
 ${NOISE_GLSL}`,
       )
@@ -160,6 +184,15 @@ vec2 fuv = fireUv(vFireXZ, uFireBox);
 if (uShowFire > 0.5 && fuv.x > 0.0 && fuv.x < 1.0 && fuv.y > 0.0 && fuv.y < 1.0) {
   vec2 n = vFireXZ / 60.0; // noise in 60 m cells
   float arrival = texture2D(uArrival, fuv).r;
+  // The response on the ground: wet (blue-grey), retardant (red), cut line (bare soil)
+  if (uShowBlock > 0.5) {
+    vec4 b = texture2D(uBlock, fuv);
+    if (b.b > 0.5 && b.r <= uNow && uNow < b.g && uNow < arrival) {
+      if (b.b < 1.5) diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.45, 0.55, 0.75), 0.8);
+      else if (b.b < 2.5) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.75, 0.16, 0.2), 0.7);
+      else diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.74, 0.52), 0.85);
+    }
+  }
   // Jitter the threshold so the front isn't a staircase of 60 m cells
   float jitter = (fireNoise(n * 2.3) - 0.5) * 70.0;
   float age = (uNow - arrival + jitter) / 60.0; // hours since burning

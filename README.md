@@ -80,6 +80,38 @@ browser (`web/lib/engine.ts`, a port of `simulate.py` in a Web Worker; about
 - **Building a line**, or drawing a firebreak, re-runs the forecast with it in
   place and shows the area with and without it.
 
+### Response (helicopters, air tanker, ground crews)
+
+`web/lib/suppression.ts` puts units to work on the forecast fire. Every hour
+each unit acts on the fire as it stands, then the fire is re-run with
+everything done so far.
+
+- **Helicopters** (AS350 from Nanyuki, Mi-17 type from Laikipia Air Base,
+  Bell 205 type from Lewa):
+  - They ferry to the lake nearest the fire, then cycle: fill, fly to the most
+    imminent edge, drop, return. Once crews are on the line, they drop next to
+    the crews.
+  - Bucket loads shrink with density altitude (elevation plus temperature). At
+    ~4,700 m on a warm moorland afternoon an AS350 lifts ~300–350 L of its
+    800 L bucket.
+  - They refuel at the nearest airstrip and fly in daylight only (06:30–18:30).
+  - A water drop holds one 60 m cell until it dries (~1–2 h, depending on load).
+- **Air tanker** (illustrative, AT-802 type, Nanyuki): retardant along ~240 m
+  of the edge, holding ~8 h.
+- **Hand crews of 20** from the nearest park gates, forest stations or the
+  Rutundu, Lewa and Nanyuki airstrips:
+  - They travel the real tracks and footpaths and anchor where they reach the
+    edge before the fire.
+  - They cut line along it at fuel- and slope-dependent rates (grass 400,
+    heath 220, Erica 120, forest 100 m/h; 70% at night), and relocate when the
+    fire moves on.
+- **In the 3D world:** aircraft fly their legs, water and retardant curtains
+  fall at each drop, wet ground, retardant and cut line show on the terrain,
+  and crews walk their routes. Click a unit in the results to follow it with
+  the camera.
+
+Aircraft figures are indicative, not operator specifications.
+
 ## Known limits
 
 - No spotting (embers jumping ahead) in the physics; hotspot assimilation stands in for it.

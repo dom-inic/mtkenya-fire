@@ -1,6 +1,7 @@
 "use client";
 
 import type { ControlLine, EngineResult } from "@/lib/engine";
+import { HELI_TYPES, type HeliType } from "@/lib/suppression";
 import type { Custom, WeatherMode } from "@/lib/scenario";
 
 export type Tool = "ignite" | "break" | null;
@@ -19,7 +20,12 @@ export interface PlannerState {
   draft: [number, number][];
   applied: { kind: LineKind; cells: [number, number][]; beforeHa: number }[];
   showLine: LineKind | null;
+  resp: { helis: Record<HeliType, number>; tankers: number; crews: number; dispatch: number };
 }
+
+/** Where each aircraft type flies from (Tropic Air flies AS350s out of Nanyuki). */
+export const HELI_BASE: Record<HeliType, string> = { as350: "Nanyuki Civil Airport", mi17: "Laikipia Air Base", bell205: "Lewa Airport" };
+export const TANKER_BASE = "Nanyuki Civil Airport";
 
 export interface Threat {
   name: string;
@@ -37,6 +43,23 @@ function Seg<T extends string | number>({ value, options, onChange }: { value: T
           {label}
         </button>
       ))}
+    </div>
+  );
+}
+
+function Stepper({ label, value, max, onChange }: { label: string; value: number; max: number; onChange: (v: number) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className={`truncate ${value ? "text-white" : ""}`}>{label}</span>
+      <div className="flex shrink-0 items-center gap-1">
+        <button onClick={() => onChange(Math.max(value - 1, 0))} className="h-5 w-5 rounded bg-white/10 leading-none hover:bg-white/20" aria-label={`Fewer: ${label}`}>
+          −
+        </button>
+        <span className="w-4 text-center font-mono">{value}</span>
+        <button onClick={() => onChange(Math.min(value + 1, max))} className="h-5 w-5 rounded bg-white/10 leading-none hover:bg-white/20" aria-label={`More: ${label}`}>
+          +
+        </button>
+      </div>
     </div>
   );
 }
@@ -97,6 +120,8 @@ export default function Planner({
   threats,
   crewEta,
   onFinishBreak,
+  follow,
+  onFollow,
 }: {
   s: PlannerState;
   set: (p: Partial<PlannerState>) => void;
@@ -106,6 +131,8 @@ export default function Planner({
   threats: Threat[];
   crewEta: number | null;
   onFinishBreak: () => void;
+  follow: string | null;
+  onFollow: (unit: string | null) => void;
 }) {
   const at = (h: number) => result?.series[Math.min(h, result.series.length - 1)]?.ha ?? 0;
   return (
@@ -197,6 +224,26 @@ export default function Planner({
         </select>
       </label>
 
+      {/* Response */}
+      <div className="mt-2.5 mb-1 font-medium text-white">Response</div>
+      <div className="space-y-1">
+        {(Object.keys(HELI_TYPES) as HeliType[]).map((k) => (
+          <Stepper key={k} label={`${HELI_TYPES[k].name.split(" (")[0]} · ${HELI_BASE[k].replace(" Civil Airport", "").replace(" Airport", "")}`} value={s.resp.helis[k]} max={3} onChange={(v) => set({ resp: { ...s.resp, helis: { ...s.resp.helis, [k]: v } } })} />
+        ))}
+        <Stepper label="Air tanker (illustrative) · Nanyuki" value={s.resp.tankers} max={2} onChange={(v) => set({ resp: { ...s.resp, tankers: v } })} />
+        <Stepper label="Hand crews of 20 · nearest gates" value={s.resp.crews} max={10} onChange={(v) => set({ resp: { ...s.resp, crews: v } })} />
+        <label className="flex items-center justify-between pt-0.5">
+          <span>Aircraft airborne after</span>
+          <select value={s.resp.dispatch} onChange={(e) => set({ resp: { ...s.resp, dispatch: Number(e.target.value) } })} className="rounded bg-white/10 px-1 py-0.5 text-white">
+            {[30, 60, 120, 240].map((m) => (
+              <option key={m} value={m} className="text-ink">
+                {m < 60 ? `${m} min` : `${m / 60} h`}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
       {/* Results */}
       {!s.ignition && <p className="mt-3 rounded bg-white/5 px-2 py-2 text-stone-300">Start a fire to see where it goes.</p>}
       {progress && (
@@ -223,6 +270,39 @@ export default function Planner({
             </div>
             <div className="mt-0.5 text-right text-[10px] text-stone-500">hectares · {result.runs} run{result.runs > 1 ? "s" : ""} in {(result.ms / 1000).toFixed(1)} s</div>
           </div>
+          {result.baseline && result.response && (
+            <div className="rounded-md bg-sky-500/15 px-2.5 py-2 ring-1 ring-sky-400/30">
+              <div className="text-[11.5px] font-semibold text-white">
+                With the response: {at(s.horizon).toLocaleString()} ha <span className="font-normal text-stone-300">vs {result.baseline.series[Math.min(s.horizon, result.baseline.series.length - 1)].ha.toLocaleString()} ha without</span>
+              </div>
+              <div className="mt-1 space-y-0.5">
+                {result.response.units.map((u) => (
+                  <button
+                    key={u.id}
+                    onClick={() => onFollow(follow === u.id ? null : u.id)}
+                    title={follow === u.id ? "Stop following" : "Follow with the camera"}
+                    className={`flex w-full justify-between gap-2 rounded px-1 text-left text-[10.5px] ${follow === u.id ? "bg-sky-400/30" : "hover:bg-white/10"}`}
+                  >
+                    <span className="truncate">
+                      {follow === u.id ? "🎥 " : ""}
+                      <b className="text-white">{u.id}</b> {u.kind === "crew" ? `crew · ${u.base}` : u.name.split(" (")[0]}
+                    </span>
+                    <span className="shrink-0 font-mono text-stone-200">
+                      {u.kind === "crew"
+                        ? u.arrives == null
+                          ? "can't reach"
+                          : `on line T+${(u.arrives / 60).toFixed(1)} h · ${u.lineKm.toFixed(1)} km`
+                        : `${u.drops} drops${u.payloadL ? ` · ${u.payloadL} L` : ""}${u.cycleMin ? ` · ${u.cycleMin} min` : ""}`}
+                    </span>
+                  </button>
+                ))}
+                <div className="pt-0.5 text-[10px] text-stone-400">Click a unit to follow it with the camera.</div>
+              </div>
+              {result.response.units.some((u) => u.kind === "heli") && (
+                <p className="mt-1 text-[10px] leading-snug text-stone-400">Bucket loads shrink in the thin, warm air over the moorland (density altitude). Aircraft fly in daylight only.</p>
+              )}
+            </div>
+          )}
           <div className="space-y-0.5">
             <div className="flex justify-between">
               <span>Nearest crew reaches the fire</span>
