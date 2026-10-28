@@ -1,0 +1,51 @@
+{
+ "world": {
+  "west": 36.95,
+  "south": -0.5,
+  "east": 37.8,
+  "north": 0.3
+ },
+ "inner": {
+  "west": 37.3,
+  "south": -0.2,
+  "east": 37.58,
+  "north": 0.06
+ },
+ "heights": {
+  "outer": [
+   1024,
+   964
+  ],
+  "inner": [
+   1040,
+   966
+  ],
+  "scale": 0.1
+ },
+ "fuel": {
+  "outer": [
+   1024,
+   964
+  ],
+  "inner": [
+   1040,
+   966
+  ]
+ },
+ "fire": {
+  "grid": [
+   1040,
+   966
+  ],
+  "units": "minutes after incident start; 65535 = unburned"
+ },
+ "imagery": {
+  "outer": "imagery_outer.webp",
+  "inner": "imagery_inner.webp",
+  "source": "Copernicus Sentinel-2 L2A, Jul\u2013Aug 2026, cloud-masked mosaic"
+ },
+ "elevation": {
+  "min": 715.9204711914062,
+  "max": 5128.86376953125
+ }
+}

@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+/* Warm paper UI over satellite imagery; fire colours carry the meaning */
+@theme {
+  --color-paper: #f6f3ee;
+  --color-panel: #fbfaf7;
+  --color-line: #e4ded4;
+  --color-ink: #1f1b16;
+  --color-muted: #7a7064;
+  --color-fire: #e8590c;
+  --color-fire-soft: #fde4d3;
+  --color-observed: #2563eb;
+  --color-sim: #e8590c;
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-mono);
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+input[type="range"].thin {
+  accent-color: var(--color-fire);
+}
+
+.mapboxgl-ctrl-logo,
+.mapboxgl-ctrl-attrib {
+  opacity: 0.7;
+}

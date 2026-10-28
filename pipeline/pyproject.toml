@@ -1,0 +1,17 @@
+[project]
+name = "mkfire"
+version = "0.1.0"
+description = "Data pipeline for the Mount Kenya fire analysis: burn scar, hotspots, weather, terrain, spread model"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "numpy",
+    "scipy",
+    "rasterio",
+    "shapely",
+    "pillow",
+    "requests",
+    "python-dotenv",
+]
+
+[tool.uv]
+package = false
