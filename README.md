@@ -18,6 +18,14 @@ The web app has three tabs:
   - **What-if planner:** click to start a fire, forecast its spread, suggest
     control lines, and send helicopters, an air tanker and ground crews.
 
+![The Mount Kenya forest ring in the Simulator, with the September 2026 burn scar on the north-east moorland](docs/media/world-mountain.jpg)
+
+| Incident: replay of the September fire | Drones: simulated fleet, thermal camera |
+|---|---|
+| ![Incident tab: modelled spread, Sentinel-2 burned area, FIRMS hotspots, timeline and charts](docs/media/incident.jpg) | ![Drones tab: thermal (ironbow) feed from a drone circling the head of the fire](docs/media/drones.jpg) |
+| **Simulator: the fire front above Lake Alice** | **What-if planner: chance of burning and the response** |
+| ![Simulator replay: the fire front burning across the moorland above Lake Alice](docs/media/world-fire.jpg) | ![What-if planner: a worst-case fire with its chance-of-burning map, a helicopter and two crews](docs/media/planner.jpg) |
+
 ```text
 pipeline/   Python: downloads and processes the data, calibrates the spread model
 web/        Next.js 15 app (reads web/public/data)
@@ -80,6 +88,10 @@ OpenStreetMap. Re-runs use the cache and are much faster.
   kilometre of line.
 - **Cause:** officially under investigation. Wild honey harvesting is
   suspected but not confirmed.
+
+| When each area was first seen burned (Sentinel-2) | Burn severity (dNBR) |
+|---|---|
+| ![Sentinel-2 progression: east of Rutundu by 4 Sep, south-west past Lake Alice by 9 Sep](docs/media/s2-progression.jpg) | ![Burn severity classes across the 8,608 ha scar](docs/media/s2-severity.jpg) |
 
 ## What the pipeline does
 
