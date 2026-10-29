@@ -10,3 +10,5 @@ __pycache__/
 
 # Live mode data (reports, photos, alert log)
 .data/
+.ruff_cache/
+.mypy_cache/

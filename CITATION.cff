@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Mount Kenya Fire Analysis (mtkenya-fire)"
+abstract: >-
+  Replay, analysis and planning tool for wildfire on Mount Kenya: Sentinel-2
+  burn mapping and NASA FIRMS hotspots of the September 2026 moorland fire, a
+  calibrated fire-spread model, and a 3D what-if and live simulator with
+  firefighting resources.
+authors:
+  - name: "The mtkenya-fire contributors"
+repository-code: "https://github.com/dom-inic/mtkenya-fire"
+license: Apache-2.0
+keywords:
+  - wildfire
+  - Mount Kenya
+  - remote sensing
+  - Sentinel-2
+  - FIRMS
+  - fire spread model

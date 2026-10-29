@@ -112,16 +112,19 @@ def main(use_firms=True, use_world=True):
     model_only = {"score": round(score, 3), "detail": detail}
     assimilated = None
     # VIIRS only (375 m pixels; MODIS is 1 km), nominal/high confidence
-    detections = [(f["geometry"]["coordinates"][1], f["geometry"]["coordinates"][0], datetime.fromisoformat(f["properties"]["t"]))
-                  for f in (hotspots or {"features": []})["features"]
-                  if f["properties"]["this_fire"] and f["properties"]["sensor"].startswith("VIIRS")
-                  and f["properties"]["conf"] != "low" and INCIDENT_START <= f["properties"]["t"] < INCIDENT_END]
+    detections = [
+        (f["geometry"]["coordinates"][1], f["geometry"]["coordinates"][0], datetime.fromisoformat(f["properties"]["t"]))
+        for f in (hotspots or {"features": []})["features"]
+        if f["properties"]["this_fire"] and f["properties"]["sensor"].startswith("VIIRS")
+        and f["properties"]["conf"] != "low" and INCIDENT_START <= f["properties"]["t"] < INCIDENT_END
+    ]
     if detections:
         arr2, added = simulate.assimilate(terr, wx, seeds, detections, start, hours, params, CONSTRAINTS)
         s_a, d_a = simulate.score(arr2, start, obs)
         assimilated = {"score": round(s_a, 3), "detail": d_a, "detections": len(added),
                        "candidates": len(detections),
-                       "seeds": [{"lat": round(a, 5), "lon": round(b, 5), "t": t.strftime("%Y-%m-%dT%H:%M")} for a, b, t in added]}
+                       "seeds": [{"lat": round(a, 5), "lon": round(b, 5), "t": t.strftime("%Y-%m-%dT%H:%M")}
+                                 for a, b, t in added]}
         print(f"Assimilated {len(added)} of {len(detections)} VIIRS hotspots as jumps: score {s_a:.3f} {d_a}")
         if s_a > score:
             score, arrival, detail = s_a, arr2, d_a

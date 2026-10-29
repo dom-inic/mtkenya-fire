@@ -1,0 +1,22 @@
+Mount Kenya Fire Analysis (mtkenya-fire)
+Copyright 2026 The mtkenya-fire contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The source code is Apache-2.0. The data products in web/public/data and the
+images in docs/media are derived from third-party datasets and carry those
+datasets' terms; see DATA_LICENSES.md. In particular:
+
+- Contains modified Copernicus Sentinel data (2026) and Copernicus DEM
+  (GLO-30) data, produced by ESA / the European Union's Copernicus Programme.
+- Contains ESA WorldCover 2021 data (© ESA WorldCover project, CC BY 4.0).
+- Contains information from OpenStreetMap, made available under the Open
+  Database License (ODbL). © OpenStreetMap contributors.
+- Contains NASA FIRMS active fire data (LANCE / FIRMS, NASA).
+- Contains modified ERA5 reanalysis data (Copernicus Climate Change Service),
+  obtained through Open-Meteo (CC BY 4.0).
+
+This is an independent research prototype. It is not affiliated with or
+endorsed by the Kenya Wildlife Service, the Kenya Forest Service, the Kenya
+Defence Forces, the Mount Kenya Trust, Tropic Air or any other organisation
+it names.

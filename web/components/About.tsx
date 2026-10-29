@@ -15,6 +15,15 @@ export default function About({ data, onClose }: { data: FireData; onClose: () =
           </button>
         </div>
 
+        <p className="rounded-md bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+          Research prototype. Forecasts come from a simplified model and satellite data that can be hours old: don&apos;t use them for life-safety decisions. Not affiliated with or endorsed by KWS, KFS, KDF,
+          the Mount Kenya Trust or other organisations named here. Open source (Apache-2.0):{" "}
+          <a href="https://github.com/dom-inic/mtkenya-fire" target="_blank" rel="noreferrer" className="font-medium underline">
+            github.com/dom-inic/mtkenya-fire
+          </a>
+          .
+        </p>
+
         <h3 className="mt-4 font-semibold">What happened (news reports)</h3>
         <p>
           The fire was first reported on 1 Sep 2026 near Rutundu on the north-east moorlands. It burned on the eastern flank of Kibiaranyeki on Tue–Wed, then on Thursday 4 Sep spread south and west toward

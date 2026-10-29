@@ -3,6 +3,7 @@ name = "mkfire"
 version = "0.1.0"
 description = "Data pipeline for the Mount Kenya fire analysis: burn scar, hotspots, weather, terrain, spread model"
 requires-python = ">=3.12,<3.14"
+license = "Apache-2.0"
 dependencies = [
     "numpy",
     "scipy",
@@ -15,3 +16,12 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.isort]
+force-single-line = true

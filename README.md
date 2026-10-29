@@ -1,10 +1,19 @@
 # Mount Kenya Fire Analysis
 
+[![CI](https://github.com/dom-inic/mtkenya-fire/actions/workflows/ci.yml/badge.svg)](https://github.com/dom-inic/mtkenya-fire/actions/workflows/ci.yml)
+[![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](LICENSE)
+
 A replay, analysis and planning tool for wildfire on Mount Kenya, built around
 the moorland fire of 1–8 September 2026. It shows where and when that fire
 burned (Sentinel-2), the satellite hotspots (NASA FIRMS), a calibrated
 fire-spread model, and a 3D world of the mountain where you can start a fire
 anywhere and plan the response.
+
+> **Status:** research prototype, open for contributions. Forecasts and
+> suggestions come from a simplified model and satellite data that can be
+> hours old; don't use them for life-safety decisions. Not affiliated with or
+> endorsed by KWS, KFS, KDF, the Mount Kenya Trust or any organisation named
+> here. Drones and aircraft figures are simulated or illustrative.
 
 The web app has three tabs:
 
@@ -40,6 +49,9 @@ without re-running the pipeline.
 
 ## Run it
 
+Requirements: Node 20+ with pnpm, Python 3.12–3.13 with [uv](https://docs.astral.sh/uv/).
+To only run the app, skip the pipeline: the data is already in the repo.
+
 ```bash
 cp .env.example .env            # then fill in both keys
 
@@ -67,8 +79,7 @@ OpenStreetMap. Re-runs use the cache and are much faster.
 - `NEXT_PUBLIC_MAPBOX_TOKEN`: a Mapbox public token. Mapbox renders the
   Incident and Drones maps and supplies label fonts. The satellite imagery is
   Esri World Imagery and the 3D relief is AWS Terrain Tiles (Terrarium), so
-  the maps also work on accounts without Mapbox raster-tile access. The
-  current account returns 429 for raster tiles.
+  the maps also work on Mapbox accounts without raster-tile access.
 - Browsers that block Canvas2D readback (for example Brave with strict
   fingerprinting protection) turn off Mapbox terrain. The drone camera falls
   back to flying at height above ground. The Simulator uses three.js and isn't
@@ -304,3 +315,21 @@ a prototype file store. Before real use, put it behind logins, set
   (Mapzen, SRTM and others)
 - Incident reports: Mount Kenya Trust (via Pulse Kenya, Capital FM /
   allAfrica), Daily Nation, Mwakilishi, Tourism Update, Africanews
+
+Full licences and attribution requirements are in [DATA_LICENSES.md](DATA_LICENSES.md).
+Note that Open-Meteo's free API is for non-commercial use, and Esri World
+Imagery has its own terms.
+
+## Contributing
+
+Contributions are welcome, from code to field knowledge about how fires behave
+on the mountain. See [CONTRIBUTING.md](CONTRIBUTING.md), the
+[Code of Conduct](CODE_OF_CONDUCT.md), and [SECURITY.md](SECURITY.md) for
+reporting vulnerabilities.
+
+## Licence
+
+The code is licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
+Data products in `web/public/data` and images in `docs/media` keep the terms
+of the datasets they come from ([DATA_LICENSES.md](DATA_LICENSES.md)). To cite
+the project, see [CITATION.cff](CITATION.cff).

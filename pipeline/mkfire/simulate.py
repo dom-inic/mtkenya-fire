@@ -195,7 +195,6 @@ def assimilate(terrain, weather, seeds, detections, start, hours, p, constraints
     anything the model had burning then (a jump, e.g. spotting across a gorge).
     detections: [(lat, lon, datetime)]. Returns (arrival, added seeds).
     """
-    from scipy import ndimage as ndi
 
     added = []
     arr = spread(terrain, weather, seeds, start, hours, p, constraints)
