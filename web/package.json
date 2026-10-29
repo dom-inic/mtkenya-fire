@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "alerts:check": "curl -s -X POST -H 'Content-Type: application/json' -H \"Authorization: Bearer ${ALERT_CHECK_TOKEN:-}\" -d '{}' ${APP_URL:-http://localhost:3000}/api/alerts"
   },
   "dependencies": {
     "@next/env": "15.5.28",

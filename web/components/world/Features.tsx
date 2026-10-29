@@ -41,8 +41,8 @@ const ROAD_STYLE: Record<string, { colour: string; lift: number }> = {
   secondary: { colour: "#efd9a8", lift: 7 },
   tertiary: { colour: "#e9d3b0", lift: 6 },
   unclassified: { colour: "#d9c3a0", lift: 6 },
-  track: { colour: "#b9a588", lift: 9 },
-  path: { colour: "#9d917f", lift: 9 },
+  track: { colour: "#b3a691", lift: 22 },
+  path: { colour: "#8f8a82", lift: 22 },
   runway: { colour: "#f5f5f4", lift: 6 },
 };
 
@@ -82,7 +82,7 @@ export function Roads({ world, proj, kinds, night = 0 }: { world: WorldData; pro
   // Unlit lines would glow at night and read as fire: dim them after dark
   for (const g of groups) {
     const m = g.obj.material as THREE.LineBasicMaterial;
-    m.opacity = (g.kind === "path" ? 0.6 : 0.9) * (1 - 0.75 * night);
+    m.opacity = (g.kind === "path" ? 0.45 : 0.9) * (1 - 0.75 * night);
   }
   return (
     <group>

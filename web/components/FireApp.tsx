@@ -47,7 +47,7 @@ function Console({ data }: { data: FireData }) {
   const [camOpen, setCamOpen] = useState(false);
   const [focus, setFocus] = useState<{ lon: number; lat: number; zoom?: number; key: number } | null>(null);
   const [about, setAbout] = useState(false);
-  const [simMode, setSimMode] = useState<"replay" | "whatif">("replay");
+  const [simMode, setSimMode] = useState<"replay" | "whatif" | "live">("replay");
 
   // Replay clock: `speed` replay-hours per real second
   const last = useRef<number | null>(null);
@@ -177,7 +177,7 @@ function Console({ data }: { data: FireData }) {
             )}
           </div>
 
-          <div className={`shrink-0 border-t border-line bg-paper px-3 pt-1 pb-2 ${tab === "simulator" && simMode === "whatif" ? "hidden" : ""}`}>
+          <div className={`shrink-0 border-t border-line bg-paper px-3 pt-1 pb-2 ${tab === "simulator" && simMode !== "replay" ? "hidden" : ""}`}>
             <Timeline data={data} minute={minute} total={total} playing={playing} speed={speed} onSeek={(m) => setMinute(Math.min(Math.max(m, 0), total))} onPlay={play} onSpeed={setSpeed} />
             <div className={`flex gap-2 ${tab === "simulator" ? "hidden" : ""}`}>
               <div className="min-w-0 flex-1">

@@ -7,9 +7,12 @@ import * as THREE from "three";
 import type { FireData, Weather } from "@/lib/data";
 import { weatherAt } from "@/lib/data";
 import type { EngineResult, FireParams, HourWeather } from "@/lib/engine";
-import { custom, forecast, september, worstCase, type WeatherSeries } from "@/lib/scenario";
+import { clusterIncidents, forecastSkill, type Detection, type Incident } from "@/lib/hotspots";
+import { custom, forecast, nowEat, september, septemberFrom, worstCase, type WeatherSeries } from "@/lib/scenario";
 import { fmtDayTime, fromMinutes } from "@/lib/time";
-import { groundHeight, loadWorld, Projection, VEXAG, type Raster, type WorldData } from "@/lib/world";
+import { groundHeight, inside, loadWorld, nearest, Projection, VEXAG, type Raster, type WorldData } from "@/lib/world";
+import { HotspotColumns, ReportPins } from "./Live3D";
+import LivePanel, { type AlertItem, type ReportItem } from "./LivePanel";
 import { Labels, Lakes, Roads, type Poi } from "./Features";
 import { ControlLineDots, Firebreaks, Ignition } from "./PlanOverlays";
 import Planner, { HELI_BASE, TANKER_BASE, type PlannerState, type Threat } from "./Planner";
@@ -21,7 +24,8 @@ import { useEngine } from "./useEngine";
 import Vegetation from "./Vegetation";
 
 type View = { name: string; from: [number, number, number]; to: [number, number, number] }; // [lon, lat, height m]
-type Mode = "replay" | "whatif";
+type Mode = "replay" | "whatif" | "live";
+const DRILL_START = "2026-09-02T06:00";
 const ROAD_KINDS = ["trunk", "primary", "secondary", "tertiary", "unclassified", "track", "path"];
 
 const VIEWS: View[] = [
@@ -97,6 +101,7 @@ interface SceneProps {
   result: EngineResult | null;
   resources: Resources | null;
   follow: string | null;
+  live: { detections: Detection[]; reports: ReportItem[]; now: string } | null;
   onGround: (lon: number, lat: number) => void;
 }
 
@@ -132,7 +137,7 @@ function Follow({ world, proj, result, unit, now, controls }: { world: WorldData
   return null;
 }
 
-function Scene({ world, data, layers, view, controls, fireLayer, now, clock, weather, showProb, plan, result, resources, follow, onGround }: SceneProps) {
+function Scene({ world, data, layers, view, controls, fireLayer, now, clock, weather, showProb, plan, result, resources, follow, live, onGround }: SceneProps) {
   const proj = useMemo(() => new Projection(world.meta.world), [world]);
   const fire = useMemo(() => makeFireUniforms(), []);
   useEffect(() => setFire(fire, fireLayer, proj), [fire, fireLayer, proj]);
@@ -210,6 +215,8 @@ function Scene({ world, data, layers, view, controls, fireLayer, now, clock, wea
           {follow && <Follow world={world} proj={proj} result={result} unit={follow} now={now} controls={controls} />}
         </>
       )}
+      {live && <HotspotColumns world={world} proj={proj} detections={live.detections} now={live.now} />}
+      {live && <ReportPins world={world} proj={proj} reports={live.reports} />}
       {built.map((b) => (
         <ControlLineDots key={b.kind} world={world} proj={proj} built line={b.line} />
       ))}
@@ -235,11 +242,21 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
   const setMode = (m: Mode) => {
     setModeState(m);
     onModeChange?.(m);
+    // Live mode owns the fire (from the satellites); what-if owns it from a click
+    if (m !== mode && m !== "replay") {
+      setPlan((s) => ({ ...s, ignition: null, seeds: [], applied: [], showLine: null, tool: m === "whatif" ? "ignite" : null, weatherMode: m === "live" ? s.weatherMode : s.weatherMode === "drill" ? "worst" : s.weatherMode }));
+      setSelectedIncRef.current?.(null);
+      clearEngineRef.current?.();
+    }
   };
+  // set below, once those hooks exist
+  const setSelectedIncRef = useRef<((id: string | null) => void) | null>(null);
+  const clearEngineRef = useRef<(() => void) | null>(null);
 
   // --- What-if planner -------------------------------------------------------
   const [plan, setPlan] = useState<PlannerState>({
     ignition: null,
+    seeds: [],
     weatherMode: "worst",
     custom: { windKmh: 20, windFrom: 90, rh: 30 },
     startHour: 13,
@@ -258,10 +275,12 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
   const runEngine = engine.run;
   const [series, setSeries] = useState<WeatherSeries | null>(null);
   const [weatherError, setWeatherError] = useState<string | null>(null);
+  const [liveSource, setLiveSource] = useState<"live" | "drill">("live");
+  const [drillNow, setDrillNow] = useState(DRILL_START);
 
   // Weather for the scenario
   useEffect(() => {
-    if (mode !== "whatif") return;
+    if (mode === "replay") return;
     const hours = plan.horizon + 1;
     setWeatherError(null);
     if (plan.weatherMode === "forecast") {
@@ -279,10 +298,11 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
         stale = true;
       };
     }
-    if (plan.weatherMode === "worst") setSeries(worstCase(plan.startHour, hours));
+    if (plan.weatherMode === "drill") setSeries(septemberFrom(data.incident.weather, drillNow, hours));
+    else if (plan.weatherMode === "worst") setSeries(worstCase(plan.startHour, hours));
     else if (plan.weatherMode === "september") setSeries(september(data.incident.weather, plan.startHour, hours));
     else setSeries(custom(plan.custom, plan.startHour, hours));
-  }, [mode, plan.weatherMode, plan.ignition, plan.horizon, plan.startHour, plan.custom, world, data]);
+  }, [mode, plan.weatherMode, plan.ignition, plan.horizon, plan.startHour, plan.custom, world, data, drillNow]);
 
   // The response: units at their real bases, crews from the staging points nearest the fire
   const resources = useMemo<Resources | null>(() => {
@@ -315,10 +335,11 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
 
   // Run the forecast whenever the scenario changes
   useEffect(() => {
-    if (mode !== "whatif" || !plan.ignition || !series || !world) return;
+    if (mode === "replay" || !plan.ignition || !series || !world) return;
     const bases = world.features.pois.filter((p) => ["gate", "station", "airstrip", "airbase"].includes(p.kind));
     runEngine({
       ignition: { lon: plan.ignition[0], lat: plan.ignition[1] },
+      seeds: plan.seeds,
       hours: plan.horizon,
       weather: series.hours,
       params: data.incident.sim.params as unknown as FireParams,
@@ -329,11 +350,156 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
       ensemble: plan.ensemble,
       resources: resources ?? undefined,
     });
-  }, [mode, plan.ignition, plan.horizon, plan.ensemble, plan.mobilise, plan.breaks, plan.applied, series, world, data, runEngine, resources]);
+  }, [mode, plan.ignition, plan.seeds, plan.horizon, plan.ensemble, plan.mobilise, plan.breaks, plan.applied, series, world, data, runEngine, resources]);
+
+  const [follow, setFollow] = useState<string | null>(null);
+  clearEngineRef.current = engine.clear;
+
+  // --- Live mode -------------------------------------------------------------
+  const [clockNow, setClockNow] = useState(nowEat());
+  const liveNow = liveSource === "drill" ? drillNow : clockNow;
+  const [detections, setDetections] = useState<Detection[]>([]);
+  const [liveStatus, setLiveStatus] = useState("Checking satellites…");
+  const [reports, setReports] = useState<ReportItem[]>([]);
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [selectedInc, setSelectedInc] = useState<string | null>(null);
+  setSelectedIncRef.current = setSelectedInc;
+  const [checking, setChecking] = useState(false);
+  const [skill, setSkill] = useState<{ hits: number; total: number; issued: string } | null>(null);
+  const lastForecast = useRef<{ incident: string; issued: string; at: (lon: number, lat: number) => number } | null>(null);
+  // Set when new detections start a forecast; only those forecasts are checked against later passes
+  const pendingIssue = useRef<string | null>(null);
+  const drill = liveSource === "drill";
+
+  // Poll the satellites (live: every 10 min; drill: when the clock moves), field reports and alerts
+  useEffect(() => {
+    if (mode !== "live") return;
+    let stale = false;
+    const load = async () => {
+      setClockNow(nowEat());
+      try {
+        const f = await fetch(drill ? `/api/firms?drill=${drillNow}` : "/api/firms?days=2").then((r) => r.json());
+        if (stale) return;
+        setDetections(f.detections ?? []);
+        setLiveStatus(f.error ? `Satellites: ${f.error}` : `${(f.detections ?? []).length} detection${(f.detections ?? []).length === 1 ? "" : "s"} in the last 48 h · ${drill ? "drill clock" : `checked ${new Date(f.checked).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}, next in 10 min`}`);
+        const [rp, al] = await Promise.all([fetch("/api/reports").then((r) => r.json()), fetch(`/api/alerts${drill ? "?drill=1" : ""}`).then((r) => r.json())]);
+        if (stale) return;
+        setReports(drill ? [] : (rp.reports ?? []));
+        setAlerts(al.alerts ?? []);
+      } catch (e) {
+        if (!stale) setLiveStatus(`Couldn't reach the server: ${(e as Error).message}`);
+      }
+    };
+    load();
+    const t = drill ? undefined : setInterval(load, 10 * 60_000);
+    return () => {
+      stale = true;
+      if (t) clearInterval(t);
+    };
+  }, [mode, drill, drillNow]);
+
+  const places = useMemo(() => {
+    if (!world) return [];
+    const kinds = new Set(["gate", "station", "alpine_hut", "wilderness_hut", "camp_site", "airstrip", "town", "village"]);
+    return [...data.incident.places.map((p) => ({ name: p.name, lon: p.lon, lat: p.lat })), ...world.features.pois.filter((p) => kinds.has(p.kind))];
+  }, [world, data]);
+
+  // Satellite detections plus field reports of fire, grouped into incidents
+  const incidents = useMemo<Incident[]>(() => {
+    if (!world) return [];
+    const fuelAt = (lon: number, lat: number) => {
+      const r = inside(world.meta.inner, lon, lat) ? world.fuelInner : world.fuelOuter;
+      return nearest(r, lon, lat);
+    };
+    const fromReports: Detection[] = reports
+      .filter((r) => r.type === "fire" || r.type === "spot")
+      .map((r) => ({ lon: r.lon, lat: r.lat, t: new Date(Date.parse(r.at) + 3 * 3600_000).toISOString().slice(0, 16), sensor: "Field report", frp: 0, conf: "high" as const, day: true }));
+    return clusterIncidents([...detections, ...fromReports], fuelAt, places);
+  }, [world, detections, reports, places]);
+
+  // Forecast the selected incident from where the satellites last saw fire
+  const incident = incidents.find((i) => i.id === selectedInc) ?? null;
+  useEffect(() => {
+    if (mode !== "live" || !incident) return;
+    const prev = lastForecast.current;
+    if (prev && prev.incident === incident.id) setSkill({ ...forecastSkill(prev.issued, incident.detections, prev.at), issued: prev.issued });
+    pendingIssue.current = liveNow;
+    const latest = incident.detections[incident.detections.length - 1];
+    const burning = incident.detections.filter((d) => (Date.parse(`${liveNow}Z`) - Date.parse(`${d.t}Z`)) / 60000 <= 12 * 60);
+    setPlan((s) => ({
+      ...s,
+      ignition: [latest.lon, latest.lat],
+      seeds: burning.map((d) => ({ lon: d.lon, lat: d.lat, t: 0 })),
+      weatherMode: drill ? "drill" : "forecast",
+      tool: null,
+      applied: [],
+      showLine: null,
+    }));
+    setSimMinute(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, incident?.id, incident?.detections.length, drill]);
+
+  // Remember each live forecast so the next satellite pass can be checked against it
+  useEffect(() => {
+    const r = engine.result;
+    if (mode !== "live" || !r || !selectedInc || !pendingIssue.current) return;
+    const g = r.grid;
+    const issued = pendingIssue.current;
+    pendingIssue.current = null;
+    lastForecast.current = {
+      incident: selectedInc,
+      issued,
+      at: (lon, lat) => {
+        const x = Math.floor((lon - g.west) / g.dLon);
+        const y = Math.floor((g.north - lat) / g.dLat);
+        // nearest burned cell within ~375 m (a VIIRS pixel)
+        let best = Infinity;
+        for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
+          const yy = y + dy;
+          const xx = x + dx;
+          if (yy >= 0 && xx >= 0 && yy < g.h && xx < g.w) best = Math.min(best, r.arrival[yy * g.w + xx]);
+        }
+        return best;
+      },
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine.result]);
+
+  const selectIncident = (id: string | null) => {
+    setSelectedInc(id);
+    setSkill(null);
+    lastForecast.current = null;
+    const inc = incidents.find((i) => i.id === id);
+    if (inc) {
+      setFollow(null);
+      setView({ name: "incident", from: [inc.lon + 0.06, inc.lat - 0.07, 7500], to: [inc.lon, inc.lat, 3300] });
+    } else {
+      setPlan((s) => ({ ...s, ignition: null, seeds: [] }));
+      engine.clear();
+    }
+  };
+
+  const checkAlertsNow = async () => {
+    setChecking(true);
+    try {
+      const r = await fetch("/api/alerts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(drill ? { drill: drillNow } : {}) }).then((x) => x.json());
+      if (r.recent) setAlerts(r.recent);
+      else if (r.error) setLiveStatus(`Alert check: ${r.error}`);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const advanceDrill = (h: number) => setDrillNow((t) => new Date(Date.parse(`${t}Z`) + h * 3600_000).toISOString().slice(0, 16));
+  const resetDrill = async () => {
+    await fetch("/api/alerts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resetDrill: true }) });
+    setAlerts([]);
+    setDrillNow(DRILL_START);
+    selectIncident(null);
+  };
 
   // Scenario clock (minutes after ignition)
   const [simMinute, setSimMinute] = useState(0);
-  const [follow, setFollow] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(2);
   useEffect(() => {
@@ -387,9 +553,10 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
 
   const startHourOfDay = series ? Number(series.start.slice(11, 13)) : plan.startHour;
   const whatif = mode === "whatif";
-  const now = whatif ? simMinute : minute;
-  const clock = whatif ? startHourOfDay * 60 + simMinute : minute;
-  const hourWeather = whatif ? series?.hours[Math.min(Math.floor(simMinute / 60), (series?.hours.length ?? 1) - 1)] : weatherAt(data.incident, minute);
+  const planning = mode !== "replay";
+  const now = planning ? simMinute : minute;
+  const clock = planning ? startHourOfDay * 60 + simMinute : minute;
+  const hourWeather = planning ? series?.hours[Math.min(Math.floor(simMinute / 60), (series?.hours.length ?? 1) - 1)] : weatherAt(data.incident, minute);
 
   const threats = useMemo<Threat[]>(() => {
     const r = engine.result;
@@ -446,15 +613,16 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
               layers={layers}
               view={view}
               controls={controls}
-              fireLayer={whatif ? whatifLayer : replayLayer}
+              fireLayer={planning ? whatifLayer : replayLayer}
               now={now}
               clock={clock}
               weather={hourWeather}
-              showProb={whatif && plan.ensemble}
-              plan={whatif ? plan : null}
-              result={whatif ? engine.result : null}
-              resources={whatif ? resources : null}
-              follow={whatif ? follow : null}
+              showProb={planning && plan.ensemble}
+              plan={planning ? plan : null}
+              result={planning ? engine.result : null}
+              resources={planning ? resources : null}
+              follow={planning ? follow : null}
+              live={mode === "live" ? { detections, reports, now: liveNow } : null}
               onGround={onGround}
             />
           </Suspense>
@@ -464,9 +632,9 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
       {/* Mode + camera presets */}
       <div className="absolute top-3 left-3 z-10 flex max-w-[calc(100%-15rem)] flex-wrap items-center gap-1">
         <div className="mr-2 flex rounded-md bg-black/55 p-0.5 shadow backdrop-blur">
-          {(["replay", "whatif"] as Mode[]).map((m) => (
+          {(["replay", "whatif", "live"] as Mode[]).map((m) => (
             <button key={m} onClick={() => setMode(m)} className={`rounded px-2.5 py-1 text-[11px] font-semibold ${mode === m ? "bg-white text-ink" : "text-white hover:bg-white/10"}`}>
-              {m === "replay" ? "Replay Sept 2026" : "What-if planner"}
+              {m === "replay" ? "Replay Sept 2026" : m === "whatif" ? "What-if planner" : "Live"}
             </button>
           ))}
         </div>
@@ -484,9 +652,52 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
         ))}
       </div>
 
-      {whatif && (
+      {(whatif || (mode === "live" && incident)) && (
         <div className="pointer-events-none absolute top-14 bottom-20 left-3 z-10 flex">
-          <Planner s={plan} set={set} result={engine.result} progress={engine.progress} weatherNote={weatherNote} threats={threats} crewEta={crewEta} onFinishBreak={finishBreak} follow={follow} onFollow={setFollow} />
+          <Planner
+            s={plan}
+            set={set}
+            result={engine.result}
+            progress={engine.progress}
+            weatherNote={weatherNote}
+            threats={threats}
+            crewEta={crewEta}
+            onFinishBreak={finishBreak}
+            follow={follow}
+            onFollow={setFollow}
+            live={
+              mode === "live" && incident
+                ? {
+                    title: `Forecast from ${drill ? "the drill clock" : "now"}`,
+                    note: `Starts from the ${plan.seeds.length} place${plan.seeds.length === 1 ? "" : "s"} the satellites saw burning in the last 12 h${incident.near ? ` near ${incident.near.name}` : ""}. Updates when new detections arrive.`,
+                  }
+                : undefined
+            }
+          />
+        </div>
+      )}
+
+      {mode === "live" && (
+        <div className="pointer-events-none absolute top-[15.5rem] right-3 bottom-20 z-10 flex">
+          <LivePanel
+            source={liveSource}
+            setSource={(src) => {
+              setLiveSource(src);
+              selectIncident(null);
+            }}
+            now={liveNow}
+            drillAdvance={advanceDrill}
+            drillReset={resetDrill}
+            status={liveStatus}
+            incidents={incidents}
+            selected={selectedInc}
+            onSelect={selectIncident}
+            skill={skill}
+            reports={reports}
+            alerts={alerts}
+            onCheckAlerts={checkAlertsNow}
+            checking={checking}
+          />
         </div>
       )}
 
@@ -502,7 +713,7 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
         </div>
         {(
           [
-            ["fire", whatif ? "Fire (what-if)" : "Fire (Sept replay)"],
+            ["fire", whatif ? "Fire (what-if)" : mode === "live" ? "Fire (forecast)" : "Fire (Sept replay)"],
             ["smoke", "Smoke & flames"],
             ["vegetation", "Vegetation"],
             ["roads", "Roads & tracks"],
@@ -514,7 +725,7 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
             {label}
           </label>
         ))}
-        {whatif && plan.ensemble && (
+        {planning && plan.ensemble && plan.ignition && (
           <div className="mt-2 border-t border-white/10 pt-2">
             <div className="mb-1 text-stone-300">Chance of burning by T+{plan.horizon} h</div>
             <div className="h-2 rounded-sm" style={{ background: "linear-gradient(90deg,#ffd933,#e0303f)" }} />
@@ -527,7 +738,7 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
       </div>
 
       {/* Clock (replay) or scenario scrubber (what-if) */}
-      {!whatif && (
+      {mode === "replay" && (
         <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg bg-black/55 px-3 py-2 text-[11px] text-stone-200 shadow-lg backdrop-blur">
           <div className="font-mono text-[13px] font-semibold text-white">
             {fmtDayTime(fromMinutes(minute, data.incident.meta.start))} EAT {night > 0.5 ? "· night" : hour < 9 ? "· morning" : hour > 16 ? "· evening" : "· day"}
@@ -536,7 +747,7 @@ export default function WorldView({ data, minute, onModeChange }: { data: FireDa
           <div className="mt-0.5 text-stone-400">Sentinel-2 Jul–Aug 2026 · Copernicus DEM · ESA WorldCover · © OpenStreetMap</div>
         </div>
       )}
-      {whatif && plan.ignition && (
+      {planning && plan.ignition && (
         <div className="absolute right-3 bottom-3 left-[324px] z-10 flex items-center gap-3 rounded-lg bg-black/60 px-3 py-2 text-[11px] text-white shadow-lg backdrop-blur">
           <button onClick={() => setPlaying((p) => !p)} className="grid h-7 w-8 place-items-center rounded bg-white text-ink" aria-label={playing ? "Pause" : "Play"}>
             {playing ? "❚❚" : "▶"}

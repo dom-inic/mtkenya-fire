@@ -12,11 +12,14 @@ The web app has three tabs:
   the satellite evidence.
 - **Drones:** a simulated drone fleet with EO/IR camera feeds.
 - **Simulator:** a 3D world of the Mount Kenya forest ring (94 × 89 km) with
-  two modes:
+  three modes:
   - **Replay:** the September fire with vegetation, smoke and day/night
     lighting.
   - **What-if planner:** click to start a fire, forecast its spread, suggest
     control lines, and send helicopters, an air tanker and ground crews.
+  - **Live:** the newest NASA FIRMS detections grouped into incidents, a
+    forecast from the latest satellite picture, field reports from rangers'
+    phones, and alerts. A drill replays September 2026 as if it were live.
 
 ![The Mount Kenya forest ring in the Simulator, with the September 2026 burn scar on the north-east moorland](docs/media/world-mountain.jpg)
 
@@ -59,7 +62,8 @@ OpenStreetMap. Re-runs use the cache and are much faster.
 ### Keys and map tiles
 
 - `FIRMS_MAP_KEY`: free from [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/api/map_key/).
-  Used only by the pipeline.
+  Used by the pipeline and by the live-mode server route. It never reaches the
+  browser.
 - `NEXT_PUBLIC_MAPBOX_TOKEN`: a Mapbox public token. Mapbox renders the
   Incident and Drones maps and supplies label fonts. The satellite imagery is
   Esri World Imagery and the 3D relief is AWS Terrain Tiles (Terrarium), so
@@ -69,6 +73,14 @@ OpenStreetMap. Re-runs use the cache and are much faster.
   fingerprinting protection) turn off Mapbox terrain. The drone camera falls
   back to flying at height above ground. The Simulator uses three.js and isn't
   affected.
+- **Live mode settings** are all optional (see `.env.example`):
+  - `APP_URL`: added to alert messages.
+  - `REPORT_TOKEN`, `ALERT_CHECK_TOKEN`: access codes for posting field
+    reports and running the alert check.
+  - Alert channels: `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`, Africa's Talking
+    SMS (`AT_USERNAME`, `AT_API_KEY`, `ALERT_SMS_TO`; `AT_USERNAME=sandbox`
+    uses their sandbox), or `ALERT_WEBHOOK_URL` (posts `{text}`; works with
+    Slack-style webhooks).
 
 ## Findings for the September 2026 fire
 
@@ -133,7 +145,11 @@ web/lib/world.ts            3D world data loading and coordinates
 web/workers/fire.worker.ts  runs scenarios off the main thread
 web/components/MapView.tsx, Timeline.tsx, Charts.tsx, SidePanel.tsx   Incident tab
 web/components/DronePanel.tsx, DroneCam.tsx                            Drones tab
-web/components/world/       Simulator: terrain, vegetation, smoke, labels, planner, response
+web/components/world/       Simulator: terrain, vegetation, smoke, labels, planner, response, live
+web/lib/hotspots.ts         FIRMS parsing, incidents, priority, forecast check
+web/lib/server/             live mode on the server: FIRMS feed, alerts, file store, world loader
+web/app/api/                firms, alerts, reports (+ photos)
+web/app/report/             phone page for field reports
 ```
 
 ## What-if planner (Simulator tab)
@@ -193,6 +209,50 @@ Example (worst-case weather, fire north of Rutundu, 24 h): no response 2,042 ha;
 two helicopters, the air tanker and six crews 1,627 ha. Helicopters alone do
 little at this altitude. Crews and early initial attack matter most.
 
+## Live mode (Simulator tab)
+
+For the next fire:
+
+- **Satellite feed:** `/api/firms` fetches the newest VIIRS (S-NPP, NOAA-20,
+  NOAA-21) and MODIS detections over the whole forest ring. The key stays on
+  the server; the app re-checks every 10 minutes.
+- **Incidents:** detections within 1.5 km and 24 h of each other are grouped.
+  An incident is **high priority** if any detection falls in moorland or
+  forest fuels. Fires only in farmland or grass below the forest are **low
+  priority** ("likely farm or land-clearing burn"). Each card shows the nearest
+  landmark, detection count, peak fire radiative power (MW), and first and
+  latest sighting.
+- **Forecast from the latest picture:** selecting an incident starts the spread
+  model from every place satellites (or rangers) saw burning in the last 12 h,
+  with the live Open-Meteo forecast. The planner's control lines and response
+  work on it. When new detections arrive the forecast re-runs, with a
+  **forecast check**: how many of the new detections fell inside the area the
+  previous forecast predicted.
+- **Field reports:** rangers open `/report` on a phone to send a GPS position,
+  a type (fire, smoke, spot fire ahead, contained, crew position), a note and a
+  photo (shrunk on the phone). Reports show as pins, and fire / spot-fire
+  reports feed the incidents and forecasts like satellite detections.
+- **Alerts:** `POST /api/alerts` checks for a new high-priority incident, or one
+  that keeps growing (5+ new detections, at most every 6 h). It forecasts the
+  next 24 h and sends a message through the configured channels; with none it
+  only logs ("dry-run"). Run it on a schedule, e.g. every 10 minutes:
+
+  ```bash
+  */10 * * * * cd /path/to/mtkenya-fire/web && pnpm -s alerts:check
+  ```
+
+- **Drill:** "Drill: Sept 2026" replays the September detections pass by pass
+  from 2 Sep 06:00, with the weather that actually followed. Advance the clock
+  (+1/3/6/12 h) to watch new detections arrive, forecasts update and alerts fire
+  (drills never send). At 06:00 it shows one high-priority incident near Lake
+  Rutundu and three low-priority farm burns. By 18:00 the fire has 53
+  detections, and only 17 of the 49 new ones fell inside the 06:00 forecast:
+  the afternoon run outpaced it, which is why each pass re-runs the forecast.
+
+Live data is kept in `web/.data/` (reports, photos, alert log; gitignored),
+a prototype file store. Before real use, put it behind logins, set
+`REPORT_TOKEN` and `ALERT_CHECK_TOKEN`, and move storage to a database.
+
 ## Known limits
 
 **Model**
@@ -215,6 +275,18 @@ little at this altitude. Crews and early initial attack matter most.
   lake per fire, the nearest to the ignition.
 - Aircraft figures are indicative, not operator specifications, and the air
   tanker is illustrative, not a statement about what Kenya has available.
+
+**Live mode**
+
+- FIRMS near-real-time data arrives ~3 h after each pass. Cloud, smoke and
+  small or low-intensity fires can go undetected, and VIIRS pixels are 375 m,
+  so positions are approximate.
+- Forecasts start with everything seen in the last 12 h burning at once.
+- The Telegram, Africa's Talking and webhook senders follow those services'
+  documented APIs but haven't been tested with real credentials; so far
+  everything has run as dry-run.
+- No logins: anyone who can reach the server can read reports and (without
+  tokens) post them.
 
 **Drones**
 

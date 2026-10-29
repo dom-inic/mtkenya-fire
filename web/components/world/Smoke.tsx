@@ -1,7 +1,7 @@
 "use client";
 
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import type { Weather } from "@/lib/data";
 import type { HourWeather } from "@/lib/engine";
@@ -147,6 +147,11 @@ export default function Smoke({
   const flames = useMemo(() => particles(FLAMES), []);
   const state = useRef({ minute, weather, night });
   state.current = { minute, weather, night };
+  // A different fire (or none): drop every particle from the old one
+  useEffect(() => {
+    smoke.age.fill(2);
+    flames.age.fill(2);
+  }, [cells, smoke, flames]);
 
   const smokeMat = useMemo(
     () =>
@@ -177,7 +182,8 @@ export default function Smoke({
     smokeMat.uniforms.uScale.value = size.height;
     smokeMat.uniforms.uNight.value = night;
     flameMat.uniforms.uScale.value = size.height;
-    const step = Math.min(dt, 0.05);
+    // Real seconds (capped only for tab switches) so plumes age the same at any frame rate
+    const step = Math.min(dt, 0.5);
 
     // Wind: where the smoke drifts (blowing toward = from + 180°), visual scale
     const speed = ((weather?.wind_kmh ?? 8) / 3.6) * 22;

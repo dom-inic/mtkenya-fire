@@ -9,6 +9,8 @@ export type LineKind = "initial" | "pinch";
 
 export interface PlannerState {
   ignition: [number, number] | null;
+  /** Other places already burning at the start (live mode: satellite detections) */
+  seeds: { lon: number; lat: number; t: number }[];
   weatherMode: WeatherMode;
   custom: Custom;
   startHour: number;
@@ -122,6 +124,7 @@ export default function Planner({
   onFinishBreak,
   follow,
   onFollow,
+  live,
 }: {
   s: PlannerState;
   set: (p: Partial<PlannerState>) => void;
@@ -133,12 +136,18 @@ export default function Planner({
   onFinishBreak: () => void;
   follow: string | null;
   onFollow: (unit: string | null) => void;
+  /** Live mode: the fire and weather come from the incident, so hide those controls */
+  live?: { title: string; note: string };
 }) {
   const at = (h: number) => result?.series[Math.min(h, result.series.length - 1)]?.ha ?? 0;
   return (
     <div className="pointer-events-auto max-h-[calc(100%-4.5rem)] w-[300px] overflow-y-auto rounded-lg bg-black/60 p-3 text-[11px] text-stone-200 shadow-xl backdrop-blur-md">
-      <div className="mb-2 text-[12.5px] font-semibold text-white">What-if planner</div>
+      <div className="mb-2 text-[12.5px] font-semibold text-white">{live ? live.title : "What-if planner"}</div>
+      {live && <p className="mb-2 text-[10.5px] leading-snug text-stone-300">{live.note}</p>}
+      {live && <p className="mb-2 text-[10.5px] leading-snug text-stone-400">{weatherNote}</p>}
 
+      {!live && (
+        <>
       {/* Tools */}
       <div className="mb-2 flex gap-1">
         <button onClick={() => set({ tool: s.tool === "ignite" ? null : "ignite" })} className={`flex-1 rounded-md px-2 py-1.5 font-medium ${s.tool === "ignite" ? "bg-orange-600 text-white" : "bg-white/10 hover:bg-white/20"}`}>
@@ -204,6 +213,9 @@ export default function Planner({
             <span className="w-12 text-right font-mono">{s.custom.rh}%</span>
           </label>
         </div>
+      )}
+
+        </>
       )}
 
       {/* Run settings */}

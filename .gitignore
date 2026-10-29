@@ -7,3 +7,6 @@ pipeline/.venv/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Live mode data (reports, photos, alert log)
+.data/

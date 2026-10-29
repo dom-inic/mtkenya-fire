@@ -1,7 +1,7 @@
 import type { HourWeather } from "./engine";
 import type { Weather } from "./data";
 
-export type WeatherMode = "forecast" | "worst" | "september" | "custom";
+export type WeatherMode = "forecast" | "worst" | "september" | "custom" | "drill";
 
 export interface Custom {
   windKmh: number;
@@ -77,4 +77,12 @@ export function september(series: Weather[], startHour: number, hours: number): 
   const out = series.slice(Math.max(i0, 0), Math.max(i0, 0) + hours).map((w) => ({ wind_kmh: w.wind_kmh, wind_from: w.wind_from, rh: w.rh, rain_mm: w.rain_mm, temp_c: w.temp_c }));
   while (out.length < hours) out.push(out[out.length - 1]);
   return { start: series[Math.max(i0, 0)].time, hours: out, note: "Weather of 4 Sep 2026 onward (ERA5), the day the fire ran" };
+}
+
+/** The September 2026 weather (ERA5) from any hour, for live-mode drills. */
+export function septemberFrom(series: Weather[], start: string, hours: number): WeatherSeries {
+  const i0 = Math.max(series.findIndex((w) => w.time === `${start.slice(0, 13)}:00`), 0);
+  const out = series.slice(i0, i0 + hours).map((w) => ({ wind_kmh: w.wind_kmh, wind_from: w.wind_from, rh: w.rh, rain_mm: w.rain_mm, temp_c: w.temp_c }));
+  while (out.length < hours) out.push(out[out.length - 1]);
+  return { start: series[i0].time, hours: out, note: `Drill: the weather that followed (ERA5), from ${series[i0].time.replace("T", " ")} EAT` };
 }

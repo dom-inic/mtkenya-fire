@@ -43,6 +43,8 @@ export interface EngineWorld {
 
 export interface Scenario {
   ignition: { lon: number; lat: number };
+  /** More places already burning at the start (e.g. satellite detections), minutes after start */
+  seeds?: { lon: number; lat: number; t: number }[];
   hours: number;
   weather: HourWeather[]; // hour 0 = ignition hour
   params: FireParams;
@@ -363,6 +365,13 @@ export function spread(t: Terrain, s: Scenario, dirShift = 0, speedMult = 1, blo
   const start = iy * g.w + ix;
   arrival[start] = 0;
   heap.push(0, start);
+  for (const sd of s.seeds ?? []) {
+    const i = cellOf(g, sd.lon, sd.lat);
+    if (i >= 0 && base[i] > 0 && sd.t < arrival[i]) {
+      arrival[i] = sd.t;
+      heap.push(sd.t, i);
+    }
+  }
   const exp = Math.exp;
   while (heap.n) {
     const tt = heap.topT;
