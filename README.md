@@ -187,6 +187,8 @@ everything done so far.
   and crews walk their routes. Click a unit in the results to follow it with
   the camera.
 
+![Following helicopter H1, an AS350, as it fills its bucket on Lake Alice while the fire burns toward Rutundu](docs/media/helicopter.jpg)
+
 Example (worst-case weather, fire north of Rutundu, 24 h): no response 2,042 ha;
 two helicopters, the air tanker and six crews 1,627 ha. Helicopters alone do
 little at this altitude. Crews and early initial attack matter most.
