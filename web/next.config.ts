@@ -13,6 +13,8 @@ const { combinedEnv } = loadEnvConfig(
 );
 
 const nextConfig: NextConfig = {
+  // Self-contained server for the Docker image (see Dockerfile)
+  output: "standalone",
   env: { NEXT_PUBLIC_MAPBOX_TOKEN: combinedEnv.NEXT_PUBLIC_MAPBOX_TOKEN ?? "" },
 };
 
