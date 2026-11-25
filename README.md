@@ -93,6 +93,21 @@ OpenStreetMap. Re-runs use the cache and are much faster.
     uses their sandbox), or `ALERT_WEBHOOK_URL` (posts `{text}`; works with
     Slack-style webhooks).
 
+### Docker
+
+`web/Dockerfile` builds a self-contained production image. The Mapbox token is
+needed at build time; the other keys are read when the server starts. Mount a
+volume on `/app/.data` to keep field reports, photos and the alert log.
+
+```bash
+cd web
+docker build --build-arg NEXT_PUBLIC_MAPBOX_TOKEN=pk.… -t mtkenya-fire .
+docker run -p 3000:3000 --env-file ../.env -v mtkenya-fire-data:/app/.data mtkenya-fire
+```
+
+If it's reachable from the internet, set `REPORT_TOKEN` and
+`ALERT_CHECK_TOKEN` (see [SECURITY.md](SECURITY.md)).
+
 ## Findings for the September 2026 fire
 
 - **Burned area:** 8,608 ha by Sentinel-2 dNBR, in line with the Mount Kenya
